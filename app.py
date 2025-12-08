@@ -58,7 +58,7 @@ CONFIG = {
         'llama_agent': 'Milkbasket Agent',
         'drive_folder_id': '1JVEQGIVfQQEPHq62sc8rJZwrTpAVJYv1',
         'spreadsheet_id': '1zlJaRur0K50ZLFQhxxmvfFVA3l4Whpe9XWgi1E-HFhg',
-        'sheet_range': 'test',
+        'sheet_range': 'mrgrn',
         'days_back': 7,
         'max_files': 2
     },
