@@ -719,7 +719,7 @@ class MilkbasketAutomation:
         raise Exception(f"Extraction failed after {retries} attempts for {file_path}")
     
     def process_extracted_data(self, extracted_data: Dict, file_info: Dict) -> List[Dict]:
-        """Process extracted data to match the specified JSON structure"""
+        """Process extracted data to match the sheet headers exactly"""
         rows = []
         items = []
         
@@ -737,15 +737,14 @@ class MilkbasketAutomation:
         
         self.log(f"[DEBUG] Processing {len(items)} items from key '{item_key_found}' in {file_info['name']}")
         
-        # Extract base document-level information
+        # Extract base document-level information - MATCHING YOUR SHEET HEADERS
         row_base = {
-            "vendor_name": self.get_value(extracted_data, ["Supplier Name", "supplier", "vendor", "vendor_name"]),
+            "supplier": self.get_value(extracted_data, ["Supplier Name", "supplier", "vendor", "vendor_name"]),
             "po_number": self.get_value(extracted_data, ["po_number", "purchase_order_number", "PO No"]),
-            "po_date": self.get_value(extracted_data, ["po_date", "purchase_order_date"]),
-            "grn_no": self.get_value(extracted_data, ["grn_number", "grn_no"]),
+            "grn_number": self.get_value(extracted_data, ["grn_number", "grn_no"]),
             "grn_date": self.get_value(extracted_data, ["grn_date", "delivered_on", "GRN Date"]),
-            "invoice_no": self.get_value(extracted_data, ["vendor_invoice_number", "invoice_number", "inv_no", "Invoice No", "invoice_no"]),
-            "invoice_date": self.get_value(extracted_data, ["invoice_date", "invoice_dt"]),
+            "vendor_invoice_number": self.get_value(extracted_data, ["vendor_invoice_number", "invoice_number", "inv_no", "Invoice No", "invoice_no"]),
+            "shipping_address": self.get_value(extracted_data, ["shipping_address", "delivery_address", "ship_to"]),
             "source_file": file_info['name'],
             "processed_date": time.strftime("%Y-%m-%d %H:%M:%S"),
             "drive_file_id": file_info['id']
@@ -759,18 +758,12 @@ class MilkbasketAutomation:
                 
             row = row_base.copy()
             row.update({
-                "sku_code": self.get_value(item, ["sku_code", "sku", "product_code"]),
-                "sku_description": self.get_value(item, ["sku_description", "description", "product_name", "item_description"]),
-                "vendor_sku": self.get_value(item, ["vendor_sku", "vendor_sku_code"]),
-                "sku_bin": self.get_value(item, ["sku_bin", "bin_code"]),
-                "lot_no": self.get_value(item, ["lot_no", "lot_number", "batch_no"]),
-                "lot_mrp": self.get_value(item, ["lot_mrp", "mrp"]),
-                "exp_qty": self.get_value(item, ["exp_qty", "expected_quantity", "ordered_qty"]),
-                "recv_qty": self.get_value(item, ["recv_qty", "received_quantity", "qty"]),
-                "unit_price": self.get_value(item, ["unit_price", "price_per_unit", "rate"]),
-                "taxable_value": self.get_value(item, ["taxable_value", "taxable_amt"]),
-                "add_cess": self.get_value(item, ["add_cess", "additional_cess"]),
-                "total_inr": self.get_value(item, ["total_inr", "total_amount", "amount"])
+                "article": self.get_value(item, ["article", "sku_code", "sku", "product_code"]),
+                "item_description": self.get_value(item, ["item_description", "sku_description", "description", "product_name"]),
+                "uom": self.get_value(item, ["uom", "unit", "unit_of_measure"]),
+                "accepted_qty": self.get_value(item, ["accepted_qty", "accepted_quantity", "qty_accepted"]),
+                "received_qty": self.get_value(item, ["received_qty", "recv_qty", "received_quantity", "qty"]),
+                "challan_qty": self.get_value(item, ["challan_qty", "exp_qty", "expected_quantity", "ordered_qty"])
             })
             
             # Only keep non-empty values
