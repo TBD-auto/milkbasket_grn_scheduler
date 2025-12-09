@@ -732,7 +732,7 @@ class MilkbasketAutomation:
             "vendor_invoice_number": ["invoice_no", "vendor_invoice_number", "invoice_number", "inv_no", "Invoice No"],
             "invoice_date": ["invoice_date", "invoice_dt", "Invoice Date"],
             "article": ["article", "article_code"],
-            "supplier": ["supplier", "supplier_name", "vendor_name"],
+            "supplier": ["supplier", "supplier_name", "Supplier Name", "vendor", "vendor_name"],
             "shipping_addr": ["shipping_addr", "shipping_address", "ship_to"],
             "received_qty": ["received_qty", "recv_qty", "quantity_received"],
             "challan_qty": ["challan_qty", "challan_quantity"],
