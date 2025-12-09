@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Milkbasket Automation - Complete workflow for processing GRN emails and PDFs
-Single script version for GitHub Actions
+Fixed version with proper data mapping and email notifications
 """
 
 import os
@@ -67,8 +67,8 @@ CONFIG = {
         'sheet_range': 'mb_workflow_logs'
     },
     'notifications': {
-        'recipients': ['keyur@thebakersdozen.in'],  # Add your email here
-        'sender_email': ''  # Will be auto-populated from authenticated user
+        'recipients': ['keyur@thebakersdozen.in'],
+        'sender_email': ''
     },
     'credentials_path': 'credentials.json',
     'token_path': 'token.json'
@@ -81,7 +81,7 @@ class MilkbasketAutomation:
         self.drive_service = None
         self.sheets_service = None
         
-        # API scopes - Added gmail.send scope for email notifications
+        # API scopes
         self.gmail_scopes = [
             'https://www.googleapis.com/auth/gmail.readonly',
             'https://www.googleapis.com/auth/gmail.send'
@@ -106,11 +106,9 @@ class MilkbasketAutomation:
             creds = None
             combined_scopes = list(set(self.gmail_scopes + self.drive_scopes + self.sheets_scopes))
             
-            # Load token if exists
             if os.path.exists(CONFIG['token_path']):
                 creds = Credentials.from_authorized_user_file(CONFIG['token_path'], combined_scopes)
             
-            # Refresh or get new credentials
             if not creds or not creds.valid:
                 if creds and creds.expired and creds.refresh_token:
                     self.log("Refreshing expired token...", "INFO")
@@ -125,17 +123,14 @@ class MilkbasketAutomation:
                         CONFIG['credentials_path'], combined_scopes)
                     creds = flow.run_local_server(port=0)
                 
-                # Save credentials
                 with open(CONFIG['token_path'], 'w') as token:
                     token.write(creds.to_json())
                 self.log("Token saved successfully", "INFO")
             
-            # Build services
             self.gmail_service = build('gmail', 'v1', credentials=creds)
             self.drive_service = build('drive', 'v3', credentials=creds)
             self.sheets_service = build('sheets', 'v4', credentials=creds)
             
-            # Get authenticated user's email for sender
             try:
                 profile = self.gmail_service.users().getProfile(userId='me').execute()
                 CONFIG['notifications']['sender_email'] = profile['emailAddress']
@@ -155,13 +150,18 @@ class MilkbasketAutomation:
         try:
             self.log("Preparing email notification...", "INFO")
             
-            # Get sender email from authenticated user
             sender_email = CONFIG['notifications']['sender_email']
+            if not sender_email:
+                self.log("No sender email configured - skipping email", "WARNING")
+                return False
             
-            # Create email body
+            recipients = CONFIG['notifications']['recipients']
+            if not recipients:
+                self.log("No recipients configured - skipping email", "WARNING")
+                return False
+            
             subject = f"Milkbasket GRN Scheduler Report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             
-            # Format the email body
             body_lines = [
                 "MILKBASKET GRN SCHEDULER WORKFLOW SUMMARY",
                 "=" * 50,
@@ -194,15 +194,13 @@ class MilkbasketAutomation:
             
             email_body = "\n".join(body_lines)
             
-            # Create message
             message = self.create_email_message(
                 sender=sender_email,
-                to=CONFIG['notifications']['recipients'],
+                to=recipients,
                 subject=subject,
                 body_text=email_body
             )
             
-            # Send email
             sent_message = self.gmail_service.users().messages().send(
                 userId='me',
                 body=message
@@ -213,11 +211,12 @@ class MilkbasketAutomation:
             
         except Exception as e:
             self.log(f"Failed to send email notification: {str(e)}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return False
     
     def create_email_message(self, sender: str, to: list, subject: str, body_text: str) -> dict:
         """Create an email message in Gmail format"""
-        # Create email headers
         message_parts = [
             f"From: {sender}",
             f"To: {', '.join(to)}",
@@ -229,13 +228,9 @@ class MilkbasketAutomation:
         ]
         
         message = "\n".join(message_parts)
-        
-        # Encode message in base64
         encoded_message = base64.urlsafe_b64encode(message.encode("utf-8")).decode("utf-8")
         
-        return {
-            'raw': encoded_message
-        }
+        return {'raw': encoded_message}
     
     def search_emails(self, sender: str = "", search_term: str = "", 
                      days_back: int = 7, max_results: int = 50) -> List[Dict]:
@@ -401,7 +396,7 @@ class MilkbasketAutomation:
     
     def process_attachment(self, message_id: str, part: Dict, sender_info: Dict, 
                           search_term: str, base_folder_id: str, attachment_filter: str) -> Dict:
-        """Process and upload a single attachment, returns dict with status"""
+        """Process and upload a single attachment"""
         try:
             filename = part.get("filename", "")
             if not filename:
@@ -448,7 +443,7 @@ class MilkbasketAutomation:
     def extract_attachments_from_email(self, message_id: str, payload: Dict, 
                                      sender_info: Dict, search_term: str, 
                                      base_folder_id: str, attachment_filter: str) -> Dict:
-        """Recursively extract all attachments from an email, returns stats"""
+        """Recursively extract all attachments from an email"""
         stats = {
             'success': 0,
             'skipped': 0,
@@ -479,7 +474,7 @@ class MilkbasketAutomation:
         return stats
     
     def process_mail_to_drive_workflow(self, config: dict) -> Dict:
-        """Process Mail to Drive workflow, returns detailed stats"""
+        """Process Mail to Drive workflow"""
         try:
             self.log("[START] Starting Gmail to Google Drive automation")
             
@@ -533,7 +528,6 @@ class MilkbasketAutomation:
                     if not sender_info:
                         continue
                     
-                    # Check for Health Factory emails (skip if contains '/' in invoice)
                     subject = sender_info.get('subject', '')
                     inv_match = re.search(r'against Inv: (\S+)', subject)
                     if inv_match:
@@ -597,7 +591,7 @@ class MilkbasketAutomation:
             }
     
     def list_drive_files(self, folder_id: str, days_back: int = 1) -> List[Dict]:
-        """List all PDF files in a Google Drive folder filtered by creation date"""
+        """List all PDF files in a Google Drive folder"""
         try:
             start_datetime = datetime.utcnow() - timedelta(days=days_back - 1)
             start_str = start_datetime.strftime('%Y-%m-%dT00:00:00Z')
@@ -680,14 +674,23 @@ class MilkbasketAutomation:
             return []
     
     def get_value(self, data, possible_keys, default=""):
-        """Return the first found key value from dict."""
+        """Return the first found key value from dict"""
+        if not isinstance(data, dict):
+            return default
         for key in possible_keys:
-            if key in data:
-                return data[key]
+            if key in data and data[key] is not None:
+                val = data[key]
+                # Convert to string and clean up
+                if isinstance(val, (int, float)):
+                    return str(val)
+                elif isinstance(val, str):
+                    return val.strip()
+                else:
+                    return str(val)
         return default
     
     def safe_extract(self, agent, file_path: str, retries: int = 3, wait_time: int = 2):
-        """Retry-safe extraction to handle server disconnections"""
+        """Retry-safe extraction"""
         for attempt in range(1, retries + 1):
             try:
                 result = agent.extract(file_path)
@@ -698,7 +701,7 @@ class MilkbasketAutomation:
         raise Exception(f"Extraction failed after {retries} attempts for {file_path}")
     
     def process_extracted_data(self, extracted_data: Dict, file_info: Dict) -> List[Dict]:
-        """Process extracted data to match the specified JSON structure"""
+        """Process extracted data - FIXED to preserve all fields"""
         rows = []
         items = []
         
@@ -711,56 +714,92 @@ class MilkbasketAutomation:
                 break
         
         if not items:
-            self.log(f"[WARNING] No items found in {file_info['name']}. Keys available: {list(extracted_data.keys())}")
+            self.log(f"[WARNING] No items found in {file_info['name']}. Keys: {list(extracted_data.keys())}")
             return rows
         
-        self.log(f"[DEBUG] Processing {len(items)} items from key '{item_key_found}' in {file_info['name']}")
+        self.log(f"[DEBUG] Processing {len(items)} items from '{item_key_found}' in {file_info['name']}")
         
-        # Extract base document-level information
-        row_base = {
-            "vendor_name": self.get_value(extracted_data, ["vendor_name", "supplier", "vendor", "Supplier Name"]),
-            "po_number": self.get_value(extracted_data, ["po_number", "purchase_order_number", "PO No"]),
-            "po_date": self.get_value(extracted_data, ["po_date", "purchase_order_date"]),
-            "grn_no": self.get_value(extracted_data, ["grn_no", "grn_number"]),
-            "grn_date": self.get_value(extracted_data, ["grn_date", "delivered_on", "GRN Date"]),
-            "invoice_no": self.get_value(extracted_data, ["invoice_no", "vendor_invoice_number", "invoice_number", "inv_no", "Invoice No"]),
-            "invoice_date": self.get_value(extracted_data, ["invoice_date", "invoice_dt"]),
-            "source_file": file_info['name'],
-            "processed_date": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "drive_file_id": file_info['id']
+        # Extract ALL base document fields - THIS IS THE KEY FIX
+        row_base = {}
+        
+        # Map all possible document-level fields
+        field_mappings = {
+            "vendor_name": ["vendor_name", "supplier", "vendor", "Supplier Name", "supplier_name"],
+            "po_number": ["po_number", "purchase_order_number", "PO No", "po_no", "PO Number"],
+            "po_date": ["po_date", "purchase_order_date", "PO Date"],
+            "grn_no": ["grn_no", "grn_number", "GRN No", "GRN Number"],
+            "grn_date": ["grn_date", "delivered_on", "GRN Date", "delivery_date"],
+            "invoice_no": ["invoice_no", "vendor_invoice_number", "invoice_number", "inv_no", "Invoice No"],
+            "invoice_date": ["invoice_date", "invoice_dt", "Invoice Date"],
+            "article": ["article", "article_code"],
+            "supplier": ["supplier", "supplier_name", "vendor_name"],
+            "shipping_addr": ["shipping_addr", "shipping_address", "ship_to"],
+            "received_qty": ["received_qty", "recv_qty", "quantity_received"],
+            "challan_qty": ["challan_qty", "challan_quantity"],
         }
+        
+        # Extract all document-level fields
+        for target_field, possible_keys in field_mappings.items():
+            value = self.get_value(extracted_data, possible_keys)
+            if value:
+                row_base[target_field] = value
+        
+        # Add metadata
+        row_base["source_file"] = file_info['name']
+        row_base["processed_date"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        row_base["drive_file_id"] = file_info['id']
+        
+        self.log(f"[DEBUG] Document-level fields extracted: {list(row_base.keys())}")
         
         # Process each item
         for item_idx, item in enumerate(items):
             if not isinstance(item, dict):
                 self.log(f"[WARNING] Item {item_idx} is not a dict, skipping")
                 continue
-                
-            row = row_base.copy()
-            row.update({
-                "sku_code": self.get_value(item, ["sku_code", "sku", "product_code"]),
-                "sku_description": self.get_value(item, ["sku_description", "description", "product_name", "item_description"]),
-                "vendor_sku": self.get_value(item, ["vendor_sku", "vendor_sku_code"]),
-                "sku_bin": self.get_value(item, ["sku_bin", "bin_code"]),
-                "lot_no": self.get_value(item, ["lot_no", "lot_number", "batch_no"]),
-                "lot_mrp": self.get_value(item, ["lot_mrp", "mrp"]),
-                "exp_qty": self.get_value(item, ["exp_qty", "expected_quantity", "ordered_qty"]),
-                "recv_qty": self.get_value(item, ["recv_qty", "received_quantity", "qty"]),
-                "unit_price": self.get_value(item, ["unit_price", "price_per_unit", "rate"]),
-                "taxable_value": self.get_value(item, ["taxable_value", "taxable_amt"]),
-                "add_cess": self.get_value(item, ["add_cess", "additional_cess"]),
-                "total_inr": self.get_value(item, ["total_inr", "total_amount", "amount"])
-            })
             
-            # Only keep non-empty values
-            cleaned_row = {k: v for k, v in row.items() if v not in ["", None]}
-            rows.append(cleaned_row)
+            # Start with base document fields
+            row = row_base.copy()
+            
+            # Add item-specific fields
+            item_mappings = {
+                "sku_code": ["sku_code", "sku", "product_code", "SKU", "item_code"],
+                "sku_description": ["sku_description", "description", "product_name", "item_description", "product_desc"],
+                "vendor_sku": ["vendor_sku", "vendor_sku_code", "vendor_product_code"],
+                "sku_bin": ["sku_bin", "bin_code", "bin"],
+                "lot_no": ["lot_no", "lot_number", "batch_no", "batch_number"],
+                "lot_mrp": ["lot_mrp", "mrp", "MRP"],
+                "exp_qty": ["exp_qty", "expected_quantity", "ordered_qty", "order_quantity"],
+                "recv_qty": ["recv_qty", "received_quantity", "qty", "quantity"],
+                "unit_price": ["unit_price", "price_per_unit", "rate", "price"],
+                "taxable_value": ["taxable_value", "taxable_amt", "taxable_amount"],
+                "add_cess": ["add_cess", "additional_cess", "cess"],
+                "total_inr": ["total_inr", "total_amount", "amount", "total"],
+                "uom": ["uom", "unit_of_measure", "unit"],
+                "accepted_qty": ["accepted_qty", "acceptance_quantity"],
+                "vendor_invoice_processed_dat": ["vendor_invoice_processed_dat", "processed_date"],
+                "item_description": ["item_description", "description", "product_name"],
+            }
+            
+            for target_field, possible_keys in item_mappings.items():
+                value = self.get_value(item, possible_keys)
+                if value:
+                    row[target_field] = value
+            
+            # Add any additional fields from item that weren't mapped
+            for key, value in item.items():
+                if key not in row and value not in ["", None]:
+                    row[key] = str(value).strip() if value else ""
+            
+            rows.append(row)
         
         self.log(f"[DEBUG] Created {len(rows)} rows from {len(items)} items")
+        if rows:
+            self.log(f"[DEBUG] Sample row fields: {list(rows[0].keys())}")
+        
         return rows
 
     def debug_extraction_structure(self, extraction_result, filename: str):
-        """Debug helper to understand extraction structure"""
+        """Debug helper"""
         self.log(f"[DEBUG] ===== EXTRACTION STRUCTURE FOR {filename} =====")
         
         def log_structure(obj, indent=0):
@@ -812,7 +851,7 @@ class MilkbasketAutomation:
             return set()
     
     def update_headers(self, spreadsheet_id: str, sheet_name: str, new_headers: List[str]) -> bool:
-        """Update the header row with new columns"""
+        """Update the header row"""
         try:
             body = {'values': [new_headers]}
             result = self.sheets_service.spreadsheets().values().update(
@@ -828,7 +867,7 @@ class MilkbasketAutomation:
             return False
     
     def process_drive_to_sheet_workflow(self, config: dict, skip_existing: bool = True) -> Dict:
-        """Process Drive to Sheet workflow, returns detailed stats"""
+        """Process Drive to Sheet workflow"""
         stats = {
             'total_pdfs': 0,
             'processed_pdfs': 0,
@@ -839,18 +878,18 @@ class MilkbasketAutomation:
         }
         
         if not LLAMA_AVAILABLE:
-            self.log("[ERROR] LlamaParse not available. Install with: pip install llama-cloud-services")
+            self.log("[ERROR] LlamaParse not available", "ERROR")
             return stats
         
         try:
-            self.log("Starting Drive to Sheet workflow with LlamaParse", "INFO")
+            self.log("Starting Drive to Sheet workflow", "INFO")
             
             os.environ["LLAMA_CLOUD_API_KEY"] = config['llama_api_key']
             extractor = LlamaExtract()
             agent = extractor.get_agent(name=config['llama_agent'])
             
             if agent is None:
-                self.log(f"[ERROR] Could not find agent '{config['llama_agent']}'. Check dashboard.")
+                self.log(f"[ERROR] Could not find agent '{config['llama_agent']}'", "ERROR")
                 return stats
             
             self.log("LlamaParse agent found")
@@ -860,7 +899,6 @@ class MilkbasketAutomation:
             existing_names = set()
             if skip_existing:
                 existing_names = self.get_existing_source_files(config['spreadsheet_id'], config['sheet_range'])
-                self.log(f"Skipping {len(existing_names)} already processed files", "INFO")
             
             pdf_files = self.list_drive_files(config['drive_folder_id'], config.get('days_back', 7))
             stats['files_found'] = len(pdf_files)
@@ -870,18 +908,16 @@ class MilkbasketAutomation:
                 original_count = len(pdf_files)
                 pdf_files = [f for f in pdf_files if f['name'] not in existing_names]
                 stats['skipped_pdfs'] = original_count - len(pdf_files)
-                self.log(f"After filtering, {len(pdf_files)} PDFs to process", "INFO")
             
             max_files = config.get('max_files')
             if max_files is not None:
                 pdf_files = pdf_files[:max_files]
-                self.log(f"Limited to {len(pdf_files)} PDFs after max_files limit", "INFO")
             
             if not pdf_files:
-                self.log("[INFO] No PDF files found to process")
+                self.log("[INFO] No PDF files to process")
                 return stats
             
-            self.log(f"Found {len(pdf_files)} PDF files to process")
+            self.log(f"Processing {len(pdf_files)} PDF files")
             
             headers = self.get_sheet_headers(config['spreadsheet_id'], sheet_name)
             headers_set = False
@@ -892,7 +928,6 @@ class MilkbasketAutomation:
                     
                     file_data = self.download_from_drive(pdf_file['id'], pdf_file['name'])
                     if not file_data:
-                        self.log(f"[ERROR] Failed to download {pdf_file['name']}")
                         stats['failed_pdfs'] += 1
                         continue
                     
@@ -902,69 +937,34 @@ class MilkbasketAutomation:
                     
                     try:
                         extraction_result = self.safe_extract(agent, tmp_path)
-                        self.debug_extraction_structure(extraction_result, pdf_file['name'])
                         
-                        # Enhanced debug logging
-                        self.log(f"[DEBUG] Extraction result type: {type(extraction_result)}")
-                        
-                        # Handle different return formats from LlamaExtract
                         all_extracted_data = []
                         
                         if isinstance(extraction_result, list):
-                            self.log(f"[DEBUG] Received list with {len(extraction_result)} result objects")
-                            for idx, r in enumerate(extraction_result):
+                            for r in extraction_result:
                                 if hasattr(r, 'data'):
                                     all_extracted_data.append(r.data)
-                                    self.log(f"[DEBUG] Result {idx}: extracted .data attribute")
                                 elif isinstance(r, dict):
                                     all_extracted_data.append(r)
-                                    self.log(f"[DEBUG] Result {idx}: is dict")
                                 else:
                                     all_extracted_data.append(r)
-                                    self.log(f"[DEBUG] Result {idx}: type {type(r)}")
                         else:
                             if hasattr(extraction_result, 'data'):
                                 all_extracted_data = [extraction_result.data]
-                                self.log(f"[DEBUG] Single result: extracted .data attribute")
                             elif isinstance(extraction_result, dict):
                                 all_extracted_data = [extraction_result]
-                                self.log(f"[DEBUG] Single result: is dict")
                             else:
                                 all_extracted_data = [extraction_result]
-                                self.log(f"[DEBUG] Single result: type {type(extraction_result)}")
                         
-                        # Process all pages/chunks and accumulate rows
                         rows_data = []
-                        total_items_found = 0
                         
-                        for page_idx, extracted_data in enumerate(all_extracted_data):
-                            self.log(f"[DEBUG] Processing chunk {page_idx + 1}/{len(all_extracted_data)}")
-                            
+                        for extracted_data in all_extracted_data:
                             if isinstance(extracted_data, dict):
-                                # Log available keys for debugging
-                                self.log(f"[DEBUG] Available keys: {list(extracted_data.keys())}")
-                                
-                                # Count items before processing
-                                items_in_chunk = 0
-                                for possible_key in ["items", "product_items", "line_items", "products"]:
-                                    if possible_key in extracted_data:
-                                        items_in_chunk = len(extracted_data[possible_key])
-                                        self.log(f"[DEBUG] Found {items_in_chunk} items in key '{possible_key}'")
-                                        break
-                                
-                                total_items_found += items_in_chunk
-                                
-                                # Process this chunk
                                 chunk_rows = self.process_extracted_data(extracted_data, pdf_file)
                                 rows_data.extend(chunk_rows)
-                                self.log(f"[DEBUG] Chunk {page_idx + 1} produced {len(chunk_rows)} rows")
-                            else:
-                                self.log(f"[WARNING] Chunk {page_idx + 1} is not a dict: {type(extracted_data)}")
-                        
-                        self.log(f"[INFO] Total items found: {total_items_found}, Total rows created: {len(rows_data)}")
                         
                         if not rows_data:
-                            self.log(f"[SKIP] No items found in {pdf_file['name']}")
+                            self.log(f"[SKIP] No items in {pdf_file['name']}")
                             stats['failed_pdfs'] += 1
                             continue
                         
@@ -988,41 +988,36 @@ class MilkbasketAutomation:
                         
                         sheet_rows = []
                         for row_dict in rows_data:
-                            row_values = [row_dict.get(h, "") for h in headers]
+                            row_values = [str(row_dict.get(h, "")) for h in headers]
                             sheet_rows.append(row_values)
                         
                         if self.append_to_google_sheet(config['spreadsheet_id'], config['sheet_range'], sheet_rows):
                             stats['rows_added'] += len(sheet_rows)
                             stats['processed_pdfs'] += 1
-                            self.log(f"[SUCCESS] Processed {pdf_file['name']}: {len(sheet_rows)} rows added")
+                            self.log(f"[SUCCESS] {pdf_file['name']}: {len(sheet_rows)} rows")
                         else:
                             stats['failed_pdfs'] += 1
-                            self.log(f"[ERROR] Failed to append data for {pdf_file['name']}")
                     
                     finally:
                         if os.path.exists(tmp_path):
                             os.remove(tmp_path)
                 
                 except Exception as e:
-                    self.log(f"[ERROR] Failed to process {pdf_file.get('name', 'unknown')}: {str(e)}")
+                    self.log(f"[ERROR] Failed {pdf_file.get('name', 'unknown')}: {str(e)}")
                     stats['failed_pdfs'] += 1
             
             self.log("[COMPLETE] Drive to Sheet workflow complete!")
-            self.log(f"[STATS] Files found: {stats['files_found']}")
-            self.log(f"[STATS] PDFs processed: {stats['processed_pdfs']}/{stats['total_pdfs']}")
-            self.log(f"[STATS] PDFs skipped (duplicates): {stats['skipped_pdfs']}")
-            self.log(f"[STATS] PDFs failed: {stats['failed_pdfs']}")
-            self.log(f"[STATS] Total rows added: {stats['rows_added']}")
+            self.log(f"[STATS] Files: {stats['files_found']}, Processed: {stats['processed_pdfs']}, Rows: {stats['rows_added']}")
             
             return stats
             
         except Exception as e:
-            self.log(f"Drive to Sheet workflow failed: {str(e)}", "ERROR")
+            self.log(f"Workflow failed: {str(e)}", "ERROR")
             return stats
     
     def log_workflow_to_sheet(self, workflow_name: str, start_time: datetime, 
                              end_time: datetime, stats: dict):
-        """Log workflow execution details to Google Sheet"""
+        """Log workflow execution"""
         try:
             duration = (end_time - start_time).total_seconds()
             duration_str = f"{duration:.2f}s"
@@ -1064,32 +1059,29 @@ class MilkbasketAutomation:
                 [log_row]
             )
             
-            self.log(f"[WORKFLOW LOG] Logged workflow: {workflow_name}")
-            
         except Exception as e:
             self.log(f"[ERROR] Failed to log workflow: {str(e)}")
     
     def run_scheduled_workflow(self):
-        """Run both workflows in sequence, log results, and send email summary"""
+        """Run both workflows and send email"""
         try:
             self.log("=" * 80)
-            self.log("STARTING MILKBASKET WORKFLOW RUN")
+            self.log("STARTING MILKBASKET WORKFLOW")
             self.log("=" * 80)
             
             overall_start = datetime.now(timezone.utc)
             
-            # Workflow 1: Mail to Drive
-            self.log("\n[WORKFLOW 1/2] Starting Mail to Drive workflow...")
+            # Workflow 1
+            self.log("\n[WORKFLOW 1/2] Mail to Drive...")
             mail_start = datetime.now(timezone.utc)
             mail_stats = self.process_mail_to_drive_workflow(CONFIG['mail'])
             mail_end = datetime.now(timezone.utc)
             self.log_workflow_to_sheet("Mail to Drive", mail_start, mail_end, mail_stats)
             
-            # Small delay between workflows
             time.sleep(5)
             
-            # Workflow 2: Drive to Sheet
-            self.log("\n[WORKFLOW 2/2] Starting Drive to Sheet workflow...")
+            # Workflow 2
+            self.log("\n[WORKFLOW 2/2] Drive to Sheet...")
             sheet_start = datetime.now(timezone.utc)
             sheet_stats = self.process_drive_to_sheet_workflow(CONFIG['sheet'], skip_existing=True)
             sheet_end = datetime.now(timezone.utc)
@@ -1106,14 +1098,12 @@ class MilkbasketAutomation:
             overall_end = datetime.now(timezone.utc)
             total_duration = (overall_end - overall_start).total_seconds()
             
-            # Format duration for display
             duration_str = f"{total_duration:.2f}s"
             if total_duration >= 60:
                 minutes = int(total_duration // 60)
                 seconds = int(total_duration % 60)
                 duration_str = f"{minutes}m {seconds}s"
             
-            # Prepare summary data for email
             summary_data = {
                 'days_back': CONFIG['mail']['days_back'],
                 'mail_emails_checked': mail_stats.get('emails_checked', 0),
@@ -1132,117 +1122,99 @@ class MilkbasketAutomation:
                 'report_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
             
-            # Send email notification
-            self.log("\n[SENDING EMAIL] Preparing and sending workflow summary...")
+            # SEND EMAIL
+            self.log("\n[SENDING EMAIL]...")
             email_sent = self.send_email_notification(summary_data)
             
             if email_sent:
-                self.log("[EMAIL] Summary email sent successfully!")
+                self.log("[EMAIL] ✓ Summary sent!", "INFO")
             else:
-                self.log("[EMAIL WARNING] Failed to send summary email")
+                self.log("[EMAIL] ✗ Failed to send", "ERROR")
             
             self.log("\n" + "=" * 80)
-            self.log("MILKBASKET WORKFLOW RUN COMPLETED")
-            self.log(f"Total Duration: {duration_str}")
-            self.log(f"Mail to Drive: {mail_stats.get('emails_checked', 0)} emails checked, {mail_stats.get('attachments_uploaded', 0)} attachments uploaded")
-            self.log(f"Drive to Sheet: {sheet_stats.get('processed_pdfs', 0)} PDFs processed, {sheet_stats.get('rows_added', 0)} rows added")
+            self.log(f"COMPLETED - Duration: {duration_str}")
             self.log("=" * 80 + "\n")
             
             return summary_data
             
         except Exception as e:
-            self.log(f"[ERROR] Scheduled workflow failed: {str(e)}", "ERROR")
+            self.log(f"[ERROR] Workflow failed: {str(e)}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return None
 
 
 def main():
-    """Main function to run the scheduler"""
+    """Main scheduler"""
     print("=" * 80)
     print("MILKBASKET GRN SCHEDULER")
-    print("Runs every 3 hours: Mail to Drive → Drive to Sheet")
+    print("Runs every 3 hours")
     print("=" * 80)
     
     automation = MilkbasketAutomation()
     
-    # Authenticate
     print("\nAuthenticating...")
     if not automation.authenticate():
-        print("ERROR: Authentication failed. Please check credentials.")
+        print("ERROR: Authentication failed")
         return
     
     print("Authentication successful!")
     
-    # Run immediately on start
     print("\nRunning initial workflow...")
     summary = automation.run_scheduled_workflow()
     
     if summary:
         print("\nWorkflow Summary:")
-        print(f"  Days Back: {summary['days_back']}")
-        print(f"  Mail to Drive: {summary['mail_attachments_uploaded']} attachments uploaded")
-        print(f"  Drive to Sheet: {summary['drive_files_processed']} files processed")
-        print(f"  Email sent to: {', '.join(CONFIG['notifications']['recipients'])}")
+        print(f"  Mail: {summary['mail_attachments_uploaded']} uploaded")
+        print(f"  Drive: {summary['drive_files_processed']} processed")
+        print(f"  Email: {'Sent' if summary.get('email_sent') else 'Check logs'}")
     
-    # Schedule to run every 3 hours
     schedule.every(3).hours.do(automation.run_scheduled_workflow)
     
-    print(f"\nScheduler started. Next run in 3 hours.")
-    print(f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("Press Ctrl+C to stop the scheduler\n")
+    print(f"\nScheduled. Next run in 3 hours.")
+    print("Press Ctrl+C to stop\n")
     
-    # Keep running
     try:
         while True:
             schedule.run_pending()
-            time.sleep(60)  # Check every minute
+            time.sleep(60)
     except KeyboardInterrupt:
-        print("\n\nScheduler stopped by user.")
-        print("=" * 80)
+        print("\n\nStopped.")
 
 
 def run_once():
-    """Run the workflow once (for GitHub Actions)"""
+    """Single run for GitHub Actions"""
     print("=" * 80)
     print("MILKBASKET WORKFLOW - SINGLE RUN")
     print("=" * 80)
     
     automation = MilkbasketAutomation()
     
-    # Authenticate
     print("\nAuthenticating...")
     if not automation.authenticate():
-        print("ERROR: Authentication failed.")
+        print("ERROR: Authentication failed")
         return 1
     
     print("Authentication successful!")
     
-    # Run workflow once
     print("\nRunning workflow...")
     summary = automation.run_scheduled_workflow()
     
     if summary:
         print("\n" + "=" * 80)
-        print("WORKFLOW COMPLETED")
-        print(f"Status: {'SUCCESS' if summary.get('overall_success', False) else 'PARTIAL SUCCESS' if summary.get('any_success', False) else 'FAILED'}")
-        print(f"Duration: {summary.get('total_duration', '0s')}")
-        print(f"Mail to Drive: {summary.get('mail_attachments_uploaded', 0)} attachments uploaded")
-        print(f"Drive to Sheet: {summary.get('drive_files_processed', 0)} files processed, {summary.get('drive_rows_added', 0)} rows added")
+        print("COMPLETED")
+        print(f"Status: {'SUCCESS' if summary.get('overall_success') else 'PARTIAL'}")
+        print(f"Duration: {summary.get('total_duration')}")
         print("=" * 80)
         
-        if summary.get('overall_success', False) or summary.get('any_success', False):
-            return 0
-        else:
-            return 1
+        return 0 if summary.get('overall_success') or summary.get('any_success') else 1
     else:
-        print("\nWorkflow failed to complete.")
+        print("\nWorkflow failed")
         return 1
 
 
 if __name__ == "__main__":
-    # Check if running in GitHub Actions mode (single run)
     if os.environ.get('GITHUB_ACTIONS') == 'true':
-        exit_code = run_once()
-        exit(exit_code)
+        exit(run_once())
     else:
-        # Run as scheduler (local development)
         main()
