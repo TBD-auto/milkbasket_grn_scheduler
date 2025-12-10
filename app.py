@@ -148,73 +148,97 @@ class MilkbasketAutomation:
             return False
     
     def send_email_notification(self, summary_data: dict):
-        """Send email notification with workflow summary"""
-        try:
-            self.log("Preparing email notification...", "INFO")
+            """Send email notification with workflow summary - with retry logic"""
+            max_retries = 3
+            retry_delay = 2
             
-            sender_email = CONFIG['notifications']['sender_email']
-            if not sender_email:
-                self.log("No sender email configured - skipping email", "WARNING")
-                return False
+            for attempt in range(1, max_retries + 1):
+                try:
+                    self.log(f"Preparing email notification (attempt {attempt}/{max_retries})...", "INFO")
+                    
+                    sender_email = CONFIG['notifications']['sender_email']
+                    if not sender_email:
+                        self.log("No sender email configured - skipping email", "WARNING")
+                        return False
+                    
+                    recipients = CONFIG['notifications']['recipients']
+                    if not recipients:
+                        self.log("No recipients configured - skipping email", "WARNING")
+                        return False
+                    
+                    subject = f"Milkbasket GRN Scheduler Report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                    
+                    body_lines = [
+                        "MILKBASKET GRN SCHEDULER WORKFLOW SUMMARY",
+                        "=" * 50,
+                        "",
+                        f"Report Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                        f"Days Back Parameter: {CONFIG['mail']['days_back']} days",
+                        "",
+                        "MAIL TO DRIVE WORKFLOW:",
+                        f"  • Number of emails checked: {summary_data.get('mail_emails_checked', 0)}",
+                        f"  • Number of attachments found: {summary_data.get('mail_attachments_found', 0)}",
+                        f"  • Number of attachments skipped: {summary_data.get('mail_attachments_skipped', 0)}",
+                        f"  • Number of attachments uploaded: {summary_data.get('mail_attachments_uploaded', 0)}",
+                        f"  • Failed to upload: {summary_data.get('mail_upload_failed', 0)}",
+                        "",
+                        "DRIVE TO SHEET WORKFLOW:",
+                        f"  • Number of files found (last {CONFIG['sheet']['days_back']} days): {summary_data.get('drive_files_found', 0)}",
+                        f"  • Number of files skipped (duplicates): {summary_data.get('drive_files_skipped', 0)}",
+                        f"  • Number of files processed: {summary_data.get('drive_files_processed', 0)}",
+                        f"  • Number of files failed to process: {summary_data.get('drive_files_failed', 0)}",
+                        f"  • Total rows added to sheet: {summary_data.get('drive_rows_added', 0)}",
+                        "",
+                        "OVERALL STATUS:",
+                        f"  • Total Duration: {summary_data.get('total_duration', '0s')}",
+                        f"  • Workflow Status: {'SUCCESS' if summary_data.get('overall_success', False) else 'PARTIAL SUCCESS' if summary_data.get('any_success', False) else 'FAILED'}",
+                        "",
+                        "=" * 50,
+                        "This is an automated report from Milkbasket GRN Scheduler.",
+                        ""
+                    ]
+                    
+                    email_body = "\n".join(body_lines)
+                    
+                    message = self.create_email_message(
+                        sender=sender_email,
+                        to=recipients,
+                        subject=subject,
+                        body_text=email_body
+                    )
+                    
+                    # Re-build the service before sending if this is a retry
+                    if attempt > 1:
+                        self.log("Rebuilding Gmail service for retry...", "INFO")
+                        creds = Credentials.from_authorized_user_file(
+                            CONFIG['token_path'], 
+                            self.gmail_scopes
+                        )
+                        self.gmail_service = build('gmail', 'v1', credentials=creds)
+                    
+                    sent_message = self.gmail_service.users().messages().send(
+                        userId='me',
+                        body=message
+                    ).execute()
+                    
+                    self.log(f"Email notification sent successfully! Message ID: {sent_message['id']}", "INFO")
+                    return True
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    self.log(f"Attempt {attempt} failed: {error_msg}", "WARNING" if attempt < max_retries else "ERROR")
+                    
+                    if attempt < max_retries:
+                        # Exponential backoff
+                        wait_time = retry_delay * (2 ** (attempt - 1))
+                        self.log(f"Waiting {wait_time}s before retry...", "INFO")
+                        time.sleep(wait_time)
+                    else:
+                        # Final failure
+                        import traceback
+                        self.log(f"Final traceback: {traceback.format_exc()}", "ERROR")
+                        return False
             
-            recipients = CONFIG['notifications']['recipients']
-            if not recipients:
-                self.log("No recipients configured - skipping email", "WARNING")
-                return False
-            
-            subject = f"Milkbasket GRN Scheduler Report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            
-            body_lines = [
-                "MILKBASKET GRN SCHEDULER WORKFLOW SUMMARY",
-                "=" * 50,
-                "",
-                f"Report Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                f"Days Back Parameter: {CONFIG['mail']['days_back']} days",
-                "",
-                "MAIL TO DRIVE WORKFLOW:",
-                f"  • Number of emails checked: {summary_data.get('mail_emails_checked', 0)}",
-                f"  • Number of attachments found: {summary_data.get('mail_attachments_found', 0)}",
-                f"  • Number of attachments skipped: {summary_data.get('mail_attachments_skipped', 0)}",
-                f"  • Number of attachments uploaded: {summary_data.get('mail_attachments_uploaded', 0)}",
-                f"  • Failed to upload: {summary_data.get('mail_upload_failed', 0)}",
-                "",
-                "DRIVE TO SHEET WORKFLOW:",
-                f"  • Number of files found (last {CONFIG['sheet']['days_back']} days): {summary_data.get('drive_files_found', 0)}",
-                f"  • Number of files skipped (duplicates): {summary_data.get('drive_files_skipped', 0)}",
-                f"  • Number of files processed: {summary_data.get('drive_files_processed', 0)}",
-                f"  • Number of files failed to process: {summary_data.get('drive_files_failed', 0)}",
-                f"  • Total rows added to sheet: {summary_data.get('drive_rows_added', 0)}",
-                "",
-                "OVERALL STATUS:",
-                f"  • Total Duration: {summary_data.get('total_duration', '0s')}",
-                f"  • Workflow Status: {'SUCCESS' if summary_data.get('overall_success', False) else 'PARTIAL SUCCESS' if summary_data.get('any_success', False) else 'FAILED'}",
-                "",
-                "=" * 50,
-                "This is an automated report from Milkbasket GRN Scheduler.",
-                ""
-            ]
-            
-            email_body = "\n".join(body_lines)
-            
-            message = self.create_email_message(
-                sender=sender_email,
-                to=recipients,
-                subject=subject,
-                body_text=email_body
-            )
-            
-            sent_message = self.gmail_service.users().messages().send(
-                userId='me',
-                body=message
-            ).execute()
-            
-            self.log(f"Email notification sent successfully! Message ID: {sent_message['id']}", "INFO")
-            return True
-            
-        except Exception as e:
-            self.log(f"Failed to send email notification: {str(e)}", "ERROR")
-            import traceback
-            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return False
     
     def create_email_message(self, sender: str, to: list, subject: str, body_text: str) -> dict:
