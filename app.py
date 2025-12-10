@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Milkbasket Automation - Complete workflow for processing GRN emails and PDFs
-Fixed version with proper data mapping and email notifications
+Milkbasket Automation - FIXED to save directly to existing PDF folder
+No longer creates its own folder structure
 """
 
 import os
@@ -46,7 +46,9 @@ logging.basicConfig(
 # Hardcoded configuration for Milkbasket
 CONFIG = {
     'mail': {
-        'gdrive_folder_id': '1h1yU576532RpLNeVo_glHEeu92gl0-K3',
+        # This is the PDF folder where attachments should be saved directly
+        # Path: Gmail_Attachments -> grn -> PDFs
+        'gdrive_folder_id': '1JVEQGIVfQQEPHq62sc8rJZwrTpAVJYv1',
         'sender': 'DONOTREPLY@ril.com',
         'search_term': 'grn',
         'attachment_filter': '',
@@ -304,61 +306,6 @@ class MilkbasketAutomation:
                 cleaned = cleaned[:100]
         return cleaned
     
-    def classify_extension(self, filename: str) -> str:
-        """Categorize file by extension"""
-        if not filename or '.' not in filename:
-            return "Other"
-            
-        ext = filename.split(".")[-1].lower()
-        
-        type_map = {
-            "pdf": "PDFs",
-            "doc": "Documents", "docx": "Documents", "txt": "Documents",
-            "xls": "Spreadsheets", "xlsx": "Spreadsheets", "csv": "Spreadsheets",
-            "jpg": "Images", "jpeg": "Images", "png": "Images", "gif": "Images",
-            "ppt": "Presentations", "pptx": "Presentations",
-            "zip": "Archives", "rar": "Archives", "7z": "Archives",
-        }
-        
-        return type_map.get(ext, "Other")
-    
-    def create_drive_folder(self, folder_name: str, parent_folder_id: Optional[str] = None) -> str:
-        """Create a folder in Google Drive"""
-        try:
-            query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-            if parent_folder_id:
-                query += f" and '{parent_folder_id}' in parents"
-            
-            existing = self.drive_service.files().list(q=query, fields='files(id, name)').execute()
-            files = existing.get('files', [])
-            
-            if files:
-                folder_id = files[0]['id']
-                self.log(f"[DRIVE] Using existing folder: {folder_name} (ID: {folder_id})")
-                return folder_id
-            
-            folder_metadata = {
-                'name': folder_name,
-                'mimeType': 'application/vnd.google-apps.folder'
-            }
-            
-            if parent_folder_id:
-                folder_metadata['parents'] = [parent_folder_id]
-            
-            folder = self.drive_service.files().create(
-                body=folder_metadata,
-                fields='id'
-            ).execute()
-            
-            folder_id = folder.get('id')
-            self.log(f"[DRIVE] Created Google Drive folder: {folder_name} (ID: {folder_id})")
-            
-            return folder_id
-            
-        except Exception as e:
-            self.log(f"[ERROR] Failed to create folder {folder_name}: {str(e)}")
-            return ""
-    
     def upload_to_drive(self, file_data: bytes, filename: str, folder_id: str) -> bool:
         """Upload file to Google Drive"""
         try:
@@ -395,8 +342,8 @@ class MilkbasketAutomation:
             return False
     
     def process_attachment(self, message_id: str, part: Dict, sender_info: Dict, 
-                          search_term: str, base_folder_id: str, attachment_filter: str) -> Dict:
-        """Process and upload a single attachment"""
+                          pdf_folder_id: str, attachment_filter: str) -> Dict:
+        """Process and upload a single attachment - FIXED to save directly to PDF folder"""
         try:
             filename = part.get("filename", "")
             if not filename:
@@ -422,13 +369,8 @@ class MilkbasketAutomation:
             
             file_data = base64.urlsafe_b64decode(att["data"].encode("UTF-8"))
             
-            search_folder_name = search_term if search_term else "all-attachments"
-            file_type_folder = self.classify_extension(filename)
-            
-            search_folder_id = self.create_drive_folder(search_folder_name, base_folder_id)
-            type_folder_id = self.create_drive_folder(file_type_folder, search_folder_id)
-            
-            success = self.upload_to_drive(file_data, final_filename, type_folder_id)
+            # FIXED: Upload directly to the PDF folder, no subfolder creation
+            success = self.upload_to_drive(file_data, final_filename, pdf_folder_id)
             
             if success:
                 self.log(f"[SUCCESS] Processed attachment: {filename}")
@@ -441,9 +383,9 @@ class MilkbasketAutomation:
             return {'status': 'failed', 'filename': part.get('filename', 'unknown'), 'reason': str(e)}
     
     def extract_attachments_from_email(self, message_id: str, payload: Dict, 
-                                     sender_info: Dict, search_term: str, 
-                                     base_folder_id: str, attachment_filter: str) -> Dict:
-        """Recursively extract all attachments from an email"""
+                                     sender_info: Dict, pdf_folder_id: str, 
+                                     attachment_filter: str) -> Dict:
+        """Recursively extract all attachments from an email - FIXED"""
         stats = {
             'success': 0,
             'skipped': 0,
@@ -454,7 +396,7 @@ class MilkbasketAutomation:
         if "parts" in payload:
             for part in payload["parts"]:
                 part_stats = self.extract_attachments_from_email(
-                    message_id, part, sender_info, search_term, base_folder_id, attachment_filter
+                    message_id, part, sender_info, pdf_folder_id, attachment_filter
                 )
                 stats['success'] += part_stats['success']
                 stats['skipped'] += part_stats['skipped']
@@ -462,7 +404,7 @@ class MilkbasketAutomation:
                 stats['total'] += part_stats['total']
         
         elif payload.get("filename") and "attachmentId" in payload.get("body", {}):
-            result = self.process_attachment(message_id, payload, sender_info, search_term, base_folder_id, attachment_filter)
+            result = self.process_attachment(message_id, payload, sender_info, pdf_folder_id, attachment_filter)
             stats['total'] += 1
             if result['status'] == 'success':
                 stats['success'] += 1
@@ -474,7 +416,7 @@ class MilkbasketAutomation:
         return stats
     
     def process_mail_to_drive_workflow(self, config: dict) -> Dict:
-        """Process Mail to Drive workflow"""
+        """Process Mail to Drive workflow - FIXED to use existing PDF folder"""
         try:
             self.log("[START] Starting Gmail to Google Drive automation")
             
@@ -497,10 +439,10 @@ class MilkbasketAutomation:
                     'processed_emails': 0
                 }
             
-            base_folder_name = f"Milkbasket_GRN_Attachments"
-            base_folder_id = self.create_drive_folder(base_folder_name, config.get('gdrive_folder_id'))
-            if not base_folder_id:
-                self.log("[ERROR] Failed to create base folder in Google Drive")
+            # FIXED: Use the PDF folder directly from config (no folder creation)
+            pdf_folder_id = config.get('gdrive_folder_id')
+            if not pdf_folder_id:
+                self.log("[ERROR] PDF folder ID not configured", "ERROR")
                 return {
                     'success': False, 
                     'emails_checked': len(emails),
@@ -510,6 +452,8 @@ class MilkbasketAutomation:
                     'upload_failed': 0,
                     'processed_emails': 0
                 }
+            
+            self.log(f"[INFO] Using existing PDF folder ID: {pdf_folder_id}")
             
             stats = {
                 'total_emails': len(emails),
@@ -544,7 +488,7 @@ class MilkbasketAutomation:
                         continue
                     
                     attachment_stats = self.extract_attachments_from_email(
-                        email['id'], message['payload'], sender_info, config['search_term'], base_folder_id, config['attachment_filter']
+                        email['id'], message['payload'], sender_info, pdf_folder_id, config['attachment_filter']
                     )
                     
                     stats['total_attachments'] += attachment_stats['total']
