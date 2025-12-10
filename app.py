@@ -51,7 +51,7 @@ CONFIG = {
         'search_term': 'grn',
         'attachment_filter': '',
         'days_back': 7,
-        'max_results': 2
+        'max_results': 1000
     },
     'sheet': {
         'llama_api_key': 'llx-csECp5RB25AeiLp57MQ8GnpViLFNyaezTOoHQIiwD7yn0CMr',
@@ -60,7 +60,7 @@ CONFIG = {
         'spreadsheet_id': '1zlJaRur0K50ZLFQhxxmvfFVA3l4Whpe9XWgi1E-HFhg',
         'sheet_range': 'mbgrn',
         'days_back': 7,
-        'max_files': 2
+        'max_files': 1000
     },
     'workflow_log': {
         'spreadsheet_id': '1zlJaRur0K50ZLFQhxxmvfFVA3l4Whpe9XWgi1E-HFhg',
