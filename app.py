@@ -601,23 +601,29 @@ class MilkbasketAutomation:
             return b""
     
     def append_to_google_sheet(self, spreadsheet_id: str, range_name: str, values: List[List[Any]]) -> bool:
-        """Append data to a Google Sheet with retry mechanism"""
+        """Append data to a Google Sheet - FIXED to properly append below existing data"""
         max_retries = 3
         wait_time = 2
         
         for attempt in range(1, max_retries + 1):
             try:
                 body = {'values': values}
+                
+                # CRITICAL FIX: Use insertDataOption='INSERT_ROWS' to ensure new rows are added
+                # This prevents overwriting and ensures data goes below existing content
                 result = self.sheets_service.spreadsheets().values().append(
                     spreadsheetId=spreadsheet_id, 
                     range=range_name,
-                    valueInputOption='USER_ENTERED', 
+                    valueInputOption='USER_ENTERED',
+                    insertDataOption='INSERT_ROWS',  # THIS IS THE KEY FIX
                     body=body
                 ).execute()
                 
                 updated_cells = result.get('updates', {}).get('updatedCells', 0)
-                self.log(f"[SHEETS] Appended {updated_cells} cells to Google Sheet")
+                updated_rows = result.get('updates', {}).get('updatedRows', 0)
+                self.log(f"[SHEETS] Appended {updated_rows} rows ({updated_cells} cells) to Google Sheet")
                 return True
+                
             except Exception as e:
                 if attempt < max_retries:
                     self.log(f"[SHEETS] Attempt {attempt} failed: {str(e)}")
